@@ -1,4 +1,4 @@
-# Hallucination Detection and Mitigation using Qwen 2.5 VL
+# Qwen 2.5 VL - Hallucination Detection and Mitigation
 
 ## Overview
 
