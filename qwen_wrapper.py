@@ -1,9 +1,12 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+
+from transformers import AutoModelForCausalLM, AutoTokenizer, Qwen2_5_VLForConditionalGeneration, AutoProcessor
+from qwen_vl_utils import process_vision_info
 
 import re
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from utils import CACHE_DIR
 
 def get_claim_extraction_prompt(content):
     prompt = """
@@ -88,19 +91,22 @@ Please breakdown the following into independent facts:
 """
     return prompt + f"{content}\n"
 
-class Qwen_2_5_LLM_14B_Instruct:
+
+class Qwen_2_5_LLM_7B_Instruct:
     def __init__(self, ):
         
-        model_name="Qwen/Qwen2.5-14B-Instruct"
+        model_name="Qwen/Qwen2.5-7B-Instruct"
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name, 
             torch_dtype=torch.bfloat16, 
-            device_map="balanced_low_0",
-            cache_dir="../hf_models/",
+            device_map="auto",
+            cache_dir=CACHE_DIR,
             attn_implementation="flash_attention_2")
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir="../hf_models/")
+        self.model.eval()
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir=CACHE_DIR)
 
     # this function is to get generic text response from qwen
+    @torch.no_grad()
     def get_response(self, query):
         messages = [
             {"role": "system", "content": "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."},
@@ -108,14 +114,15 @@ class Qwen_2_5_LLM_14B_Instruct:
         ]
         text = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         model_inputs = self.tokenizer([text], return_tensors="pt")
-        model_inputs = model_inputs.to("cuda")
+        model_inputs = model_inputs.to(self.model.device)
         # Generate the text response
-        generated_ids = self.model.generate(**model_inputs, max_new_tokens=4096)
+        generated_ids = self.model.generate(**model_inputs, max_new_tokens=2048)
         generated_ids = [output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)]
         response = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
         return response
     
     # this function is to extract a 'list of claims' from a given text --> developed for HAL detection
+    @torch.no_grad()
     def extract_claims(self, content):
         messages = [
             {"role": "system", "content": "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."},
@@ -123,9 +130,9 @@ class Qwen_2_5_LLM_14B_Instruct:
         ]
         text = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         model_inputs = self.tokenizer([text], return_tensors="pt")
-        model_inputs = model_inputs.to("cuda")
+        model_inputs = model_inputs.to(self.model.device)
         # Generate the text response
-        generated_ids = self.model.generate(**model_inputs, max_new_tokens=4096)
+        generated_ids = self.model.generate(**model_inputs, max_new_tokens=2048)
         generated_ids = [output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)]
         response = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
         # Extract claims
@@ -136,15 +143,10 @@ class Qwen_2_5_LLM_14B_Instruct:
         return fact_list
 
 
-
 """
 ==========================================================================================================================================================================
 ==========================================================================================================================================================================
 """
-
-
-from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
-from qwen_vl_utils import process_vision_info
 
 
 class Qwen_2_5_VL_7B_Instruct:
@@ -153,12 +155,14 @@ class Qwen_2_5_VL_7B_Instruct:
         self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             "Qwen/Qwen2.5-VL-7B-Instruct", 
             torch_dtype=torch.bfloat16, 
-            device_map="balanced_low_0",
-            cache_dir="../hf_models/",
+            device_map="auto",
+            cache_dir=CACHE_DIR,
             attn_implementation="flash_attention_2")
-        self.processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct", cache_dir="../hf_models/", use_fast=True)
+        self.model.eval()
+        self.processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct", cache_dir=CACHE_DIR, use_fast=True)
+        self.processor.tokenizer.padding_side = "left"
 
-    # this function is to get generic text response from qwen
+    @torch.no_grad()
     def get_response(self, img_path, query):
         messages = [
             {
@@ -182,9 +186,50 @@ class Qwen_2_5_VL_7B_Instruct:
             padding=True,
             return_tensors="pt",
         )
-        inputs = inputs.to("cuda")
+        inputs = inputs.to(self.model.device)
         # Inference: Generation of the output
-        generated_ids = self.model.generate(**inputs, max_new_tokens=4096)
+        generated_ids = self.model.generate(**inputs, max_new_tokens=1024)
         generated_ids_trimmed = [out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)]
         output_text = self.processor.batch_decode(generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False)
         return output_text[0]
+    
+    @torch.no_grad()
+    def get_batch_response(self, img_paths, queries):
+
+        if len(img_paths) != len(queries): raise ValueError("img_paths and queries must have the same length.")
+
+        messages = []
+        for img_path, query in zip(img_paths, queries):
+            message = {
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": img_path},
+                    {"type": "text", "text": query},
+                ],
+            }
+            messages.append([message])  # Wrap each message in a list for batch processing
+
+        # Preparation for batch inference
+        texts = [
+            self.processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=True)
+            for msg in messages
+        ]
+        image_inputs, video_inputs = process_vision_info(messages)
+        inputs = self.processor(
+            text=texts,
+            images=image_inputs,
+            videos=video_inputs,
+            padding=True,
+            return_tensors="pt",
+        )
+        inputs = inputs.to(self.model.device)
+
+        # Batch Inference
+        generated_ids = self.model.generate(**inputs, max_new_tokens=1024)
+        generated_ids_trimmed = [
+            out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+        ]
+        output_texts = self.processor.batch_decode(
+            generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+        )
+        return output_texts

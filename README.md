@@ -17,11 +17,10 @@ Our objective is to detect these errors (HAL detection) and rectify them (HAL mi
 
 The process involves several steps:
 
-1.  **Claim Extraction:** Claims are extracted from (already hallucinated) responses using a Qwen LLM (specifically, Qwen 2.5 14B is currently used). This is handled within `qwen_wrapper.py`.
-2.  **Hallucination Annotation:** The `qwen_HAL_annotator.py` script leverages the Qwen VL model (Qwen 2.5 VL 7B currently) to annotate each extracted claim. Annotations include:
-    * **Label:** Hallucination, Non-hallucination, or Subjective.
+1.  **Claim Extraction:** Claims are extracted from (already hallucinated) responses using a Qwen-2.5-7B-Instruct LLM (smaller models like 3B sometimes dosen't follow the instruction properly). This is handled within `qwen_wrapper.py`.
+2.  **Hallucination Annotation:** The `qwen_HAL_annotator.py` script leverages the Qwen VL model to annotate each extracted claim. Qwen-2.5-VL-7B-Instruct is used currently; depending on your GPU resources, please use larger/powerful models for more reliable annotations. Annotations include:
+    * **Label:** Hallucination or Non-hallucination.
     * **Reason:** An explanation for the annotation, aiding interpretability and error correction.
-    * The annotator also performs self-checks on its annotations.
 3.  **Response Rectification:** Based on the annotations, the `qwen_HAL_annotator.py` script attempts to rectify the errors found in the original response.
 
 **Analysis:** The `analyse_qwen_annotations.py` script can be used to visualize the annotation results.
@@ -32,8 +31,15 @@ The process involves several steps:
 * `qwen_wrapper.py`: Contains wrappers for the Qwen 2.5 LLM and Qwen 2.5 VL models.
 * `qwen_HAL_annotator.py`: Core script for claim extraction, annotation, and rectification.
 * `analyse_qwen_annotations.py`: Script for visualizing annotation results.
-* `Qwen_HAL_Annotations.json`: Output annotations for 5 captioning and 5 VQA samples. For your reference!
+* `Qwen_HAL_Annotations.json`: Output annotations for 100 random samples for your reference!
 
 ## Current Status
 
-**Work in Progress:** This repository is under active development. The quality of annotations produced by the Qwen models needs further improvement.
+**Work in Progress:** This repository is under active development. 
+
+* The current Qwen-HAL-Detection pipeline is suited ONLY for image captioning and single-round VQA tasks.
+* Updates as of 8 April,
+    - LLM: Qwen 2.5 14B Instruct --> Qwen 2.5 7B Instruct
+    - Refined the prompts (removed subjective label as it is noisy)
+    - Removed annotation self-verification step (seemed unnecessary + reduces latency)
+    - IMPORTANT: Qwen-VL now evaluates each and every claim independently and NOT all-at-once (though this is faster, the annotation quality is not that good!)

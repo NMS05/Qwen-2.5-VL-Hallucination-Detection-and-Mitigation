@@ -2,8 +2,9 @@ import json
 from PIL import Image
 import random
 import matplotlib.pyplot as plt
+from utils import IMAGE_DIR, SAVE_PATH
 
-with open("Qwen_HAL_Annotations.json", "r") as f:
+with open(SAVE_PATH, "r") as f:
     annotations = json.load(f)
 
 while True:
@@ -11,7 +12,7 @@ while True:
     sample = random.choice(annotations)
 
     # load image
-    img_path = '/home/DTC_SSD/HAL_Detection/POVID/mini_povid_images/' + sample['image']
+    img_path = IMAGE_DIR + sample['image']
     image = Image.open(img_path)
 
     print(f"\n + Prompt: \n{sample['prompt']}")
